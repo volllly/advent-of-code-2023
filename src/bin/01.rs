@@ -1,6 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use chumsky::prelude::*;
 use tailsome::IntoOption;
 
 advent_of_code::solution!(1);
