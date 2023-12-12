@@ -166,48 +166,6 @@ impl Mapping {
             )
             .min()
     }
-
-    // fn map_range<F, T, A>(&self, from: F, to: &RangeMap<F, T>) -> (T, Option<F>)
-    // where
-    //     F: Deref<Target = u64>,
-    //     F: Clone,
-    //     F: Ord,
-    //     F: From<u64>,
-    //     T: Deref<Target = u64>,
-    //     T: From<u64>,
-    // {
-    //     if let Some((k, v)) = to.get_key_value(&from) {
-    //         (
-    //             T::from(**v + *from - *k.start()),
-    //             F::from(*k.end() + 1).into_some(),
-    //         )
-    //     } else {
-    //         (
-    //             T::from(*from),
-    //             to.iter()
-    //                 .filter(|(k, v)| k.end() >= from)
-    //                 .next()
-    //                 .map(|(n, _)| n.start()),
-    //         )
-    //     }
-    // }
-
-    // pub fn locations_ranges(&self) -> Vec<Location> {
-    //     let ranges = self
-    //         .seeds
-    //         .iter()
-    //         .tuples()
-    //         .map(|(s, e)| (*s..Seed(**s + **e)));
-
-    //     let mut soils = Vec::<Soil>::new();
-    //     let mut locations = Vec::<Location>::new();
-
-    //     for range in ranges {
-    //         self.map_range(range.start(), &self.soil);
-    //     }
-
-    //     locations
-    // }
 }
 
 impl FromStr for Mapping {
