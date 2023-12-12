@@ -20,10 +20,6 @@ today = ["chrono"]
 test_lib = []
 
 [dependencies]
-chumsky = "0.9.3"
-pico-args = "0.5.0"
-slotmap = "1.0.7"
-tailsome = "1.0.0"
 
 # Template dependencies
 chrono = { version = "0.4.31", optional = true }
@@ -32,3 +28,12 @@ pico-args = "0.5.0"
 tinyjson = "2.5.1"
 
 # Solution dependencies
+chumsky = "0.9.3"
+tap = "1.0.1"
+enum_dispatch = "0.3.12"
+indicatif = "0.17.7"
+itertools = "0.12.0"
+rangemap = "1.4.0"
+rayon = "1.8.0"
+slotmap = "1.0.7"
+tailsome = "1.0.0"chumsky = "0.9.3"
