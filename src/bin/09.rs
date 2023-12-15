@@ -65,11 +65,18 @@ impl From<History> for Derivatives {
 }
 
 impl Derivatives {
-    fn predict(&self) -> i32 {
+    fn next(&self) -> i32 {
         self.0
             .iter()
             .rev()
             .fold(0, |acc, d| d.last().unwrap() + acc)
+    }
+
+    fn prev(&self) -> i32 {
+        self.0
+            .iter()
+            .rev()
+            .fold(0, |acc, d| d.first().unwrap() - acc)
     }
 }
 
@@ -103,13 +110,18 @@ pub fn part_one(input: &str) -> Option<i32> {
     Histories::from_str(input)
         .unwrap()
         .iter()
-        .map(|h| h.predict())
+        .map(|h| h.next())
         .sum::<i32>()
         .into_some()
 }
 
-pub fn part_two(input: &str) -> Option<u32> {
-    None
+pub fn part_two(input: &str) -> Option<i32> {
+    Histories::from_str(input)
+        .unwrap()
+        .iter()
+        .map(|h| h.prev())
+        .sum::<i32>()
+        .into_some()
 }
 
 #[cfg(test)]
@@ -125,6 +137,6 @@ mod tests {
     #[test]
     fn test_part_two() {
         let result = part_two(&advent_of_code::template::read_file("examples", DAY));
-        assert_eq!(result, None);
+        assert_eq!(result, 2.into_some());
     }
 }
