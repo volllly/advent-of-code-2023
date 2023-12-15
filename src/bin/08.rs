@@ -90,11 +90,11 @@ impl FromStr for Map {
 }
 
 impl Map {
-    fn follow<'a>(&'a self, period: usize, from: &'a str) -> Vec<&str> {
+    fn follow<'a>(&'a self, phase: usize, from: &'a str) -> Vec<&str> {
         let mut trail = Vec::<&str>::new();
 
         let mut current = from;
-        for direction in self.directions.iter().cycle().skip(period) {
+        for direction in self.directions.iter().cycle().skip(phase) {
             current = self.map[current].take(*direction);
             trail.push(current);
             if current.ends_with('Z') {
