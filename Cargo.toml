@@ -28,7 +28,7 @@ pico-args = "0.5.0"
 tinyjson = "2.5.1"
 
 # Solution dependencies
-chumsky = "0.9.3"
+chumsky = { version = "0.9.3", default-features = false }
 tap = "1.0.1"
 enum_dispatch = "0.3.12"
 indicatif = "0.17.7"
