@@ -1,13 +1,16 @@
 use std::{
+    collections::HashSet,
     fmt::{Debug, Display},
+    io::stdin,
+    iter::repeat,
     ops::{Add, AddAssign, Index},
     str::FromStr,
 };
 
 use chumsky::{prelude::*, text::newline};
-use strum::EnumIs;
+use itertools::Itertools;
+use strum::{EnumCount, EnumIs, FromRepr};
 use tailsome::{IntoOption, IntoResult};
-use tap::Tap;
 
 advent_of_code::solution!(10);
 
@@ -17,6 +20,35 @@ enum Direction {
     East,
     South,
     West,
+}
+
+impl Direction {
+    fn cw(self) -> Self {
+        match self {
+            Direction::North => Direction::East,
+            Direction::East => Direction::South,
+            Direction::South => Direction::West,
+            Direction::West => Direction::North,
+        }
+    }
+
+    fn ccw(self) -> Self {
+        match self {
+            Direction::North => Direction::West,
+            Direction::East => Direction::North,
+            Direction::South => Direction::East,
+            Direction::West => Direction::South,
+        }
+    }
+
+    fn rev(self) -> Self {
+        match self {
+            Direction::North => Direction::South,
+            Direction::East => Direction::West,
+            Direction::South => Direction::North,
+            Direction::West => Direction::East,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -61,26 +93,39 @@ impl Pipe {
 impl Display for Pipe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_north() && self.is_east() {
-            f.write_str("L")
+            f.write_str("└")
         } else if self.is_east() && self.is_south() {
-            f.write_str("F")
+            f.write_str("┌")
         } else if self.is_south() && self.is_west() {
-            f.write_str("7")
+            f.write_str("┐")
         } else if self.is_west() && self.is_north() {
-            f.write_str("J")
+            f.write_str("┘")
         } else if self.is_north() && self.is_south() {
-            f.write_str("|")
+            f.write_str("│")
         } else if self.is_west() && self.is_east() {
-            f.write_str("-")
+            f.write_str("─")
         } else {
             unreachable!();
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, EnumIs)]
+enum Area {
+    Inner,
+    Outer,
+}
+
+#[derive(Debug, EnumIs)]
+enum RawCell {
+    Empty(Option<Area>),
+    Start,
+    Pipe(Pipe),
+}
+
 #[derive(Debug, EnumIs)]
 enum Cell {
-    Empty,
+    Empty(Option<Area>),
     Start,
     Pipe(Pipe),
 }
@@ -88,7 +133,9 @@ enum Cell {
 impl Display for Cell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Cell::Empty => f.write_str("."),
+            Cell::Empty(None) => f.write_str("."),
+            Cell::Empty(Some(Area::Inner)) => f.write_str("█"),
+            Cell::Empty(Some(Area::Outer)) => f.write_str("░"),
             Cell::Start => f.write_str("S"),
             Cell::Pipe(pipe) => f.write_str(&pipe.to_string()),
         }
@@ -100,12 +147,14 @@ impl From<char> for Cell {
         if value == 'S' {
             Cell::Start
         } else {
-            Pipe::try_from(value).map(Cell::Pipe).unwrap_or(Cell::Empty)
+            Pipe::try_from(value)
+                .map(Cell::Pipe)
+                .unwrap_or(Cell::Empty(None))
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 struct Coordinates {
     pub x: isize,
     pub y: isize,
@@ -169,19 +218,33 @@ impl Index<Coordinates> for Cells {
 
     fn index(&self, index: Coordinates) -> &Self::Output {
         if index.x < 0 || index.y < 0 {
-            return &Cell::Empty;
+            return &Cell::Empty(Some(Area::Outer));
         }
 
         self.0
             .get(index.y as usize)
             .and_then(|row| row.get(index.x as usize))
-            .unwrap_or(&Cell::Empty)
+            .unwrap_or(&Cell::Empty(Some(Area::Outer)))
     }
 }
 
 impl Cells {
+    fn get_mut(&mut self, index: Coordinates) -> Option<&mut Cell> {
+        if index.x < 0 || index.y < 0 {
+            return None;
+        }
+
+        self.0
+            .get_mut(index.y as usize)
+            .and_then(|row| row.get_mut(index.x as usize))
+    }
+
     fn rows(&self) -> impl Iterator<Item = &Vec<Cell>> {
         self.0.iter()
+    }
+
+    fn rows_mut(&mut self) -> impl Iterator<Item = &mut Vec<Cell>> {
+        self.0.iter_mut()
     }
 
     fn onto(&self, from: Coordinates, through: Coordinates) -> Option<Coordinates> {
@@ -194,6 +257,160 @@ impl Cells {
             .find(|c| **c != from)
             .copied()
     }
+
+    fn entry_direction(&self, from: Coordinates, through: Coordinates) -> Option<Direction> {
+        let Cell::Pipe(cell) = &self[through] else {
+            return None;
+        };
+
+        cell.directions()
+            .iter()
+            .find(|d| through + **d == from)
+            .copied()
+            .unwrap()
+            .into_some()
+    }
+
+    fn exit_direction(&self, from: Coordinates, through: Coordinates) -> Option<Direction> {
+        let Cell::Pipe(cell) = &self[through] else {
+            return None;
+        };
+
+        cell.directions()
+            .iter()
+            .find(|d| through + **d != from)
+            .copied()
+            .unwrap()
+            .into_some()
+    }
+
+    fn curvature(&self, from: Coordinates, through: Coordinates) -> Option<i8> {
+        let entry_direction = self.entry_direction(from, through)?;
+
+        let exit_direction = self.exit_direction(from, through)?;
+
+        if entry_direction.ccw() == exit_direction {
+            return 1.into_some();
+        }
+
+        if entry_direction.cw() == exit_direction {
+            return (-1).into_some();
+        }
+
+        0.into_some()
+    }
+
+    fn orthogonal(through: Coordinates, direction: Direction, curvature: i8) -> Coordinates {
+        match direction {
+            Direction::North => {
+                if curvature.is_positive() {
+                    through + Direction::East
+                } else {
+                    through + Direction::West
+                }
+            }
+            Direction::East => {
+                if curvature.is_positive() {
+                    through + Direction::South
+                } else {
+                    through + Direction::North
+                }
+            }
+            Direction::South => {
+                if curvature.is_positive() {
+                    through + Direction::West
+                } else {
+                    through + Direction::East
+                }
+            }
+            Direction::West => {
+                if curvature.is_positive() {
+                    through + Direction::North
+                } else {
+                    through + Direction::South
+                }
+            }
+        }
+    }
+
+    fn get_orthogonal(
+        &self,
+        from: Coordinates,
+        through: Coordinates,
+        curvature: i8,
+    ) -> HashSet<Coordinates> {
+        let mut orthogonal = HashSet::<Coordinates>::new();
+
+        let Some(exit_direction) = self.exit_direction(from, through) else {
+            return orthogonal;
+        };
+
+        if self
+            .curvature(from, through)
+            .map(|c| c == 0)
+            .unwrap_or_default()
+        {
+            orthogonal.insert(Self::orthogonal(through, exit_direction, curvature));
+        } else {
+            #[allow(clippy::collapsible_else_if)]
+            if self
+                .curvature(from, through)
+                .map(|c| c.signum() == curvature.signum())
+                .unwrap_or_default()
+            {
+                orthogonal
+                    .insert(Self::orthogonal(through, exit_direction, curvature) + exit_direction);
+            } else {
+                orthogonal.insert(Self::orthogonal(through, exit_direction, curvature));
+
+                let Some(entry_direction) = self.entry_direction(from, through) else {
+                    return HashSet::new();
+                };
+                let entry_orthogonal = Self::orthogonal(through, entry_direction.rev(), curvature);
+
+                orthogonal.insert(entry_orthogonal);
+
+                orthogonal.insert(entry_orthogonal + entry_direction.rev());
+            }
+        }
+
+        orthogonal
+    }
+
+    fn flood_fill(&mut self, with: Area, start: Coordinates) {
+        let mut flood = HashSet::<Coordinates>::new();
+        flood.insert(start);
+        loop {
+            let old_flood = flood.clone();
+            flood.clear();
+            for wave in old_flood {
+                if matches!(self[wave], Cell::Empty(None)) {
+                    if let Some(cell) = self.get_mut(wave) {
+                        *cell = Cell::Empty(Some(with));
+                    }
+                }
+
+                if matches!(self[wave + Direction::North], Cell::Empty(None)) {
+                    flood.insert(wave + Direction::North);
+                }
+
+                if matches!(self[wave + Direction::East], Cell::Empty(None)) {
+                    flood.insert(wave + Direction::East);
+                }
+
+                if matches!(self[wave + Direction::West], Cell::Empty(None)) {
+                    flood.insert(wave + Direction::West);
+                }
+
+                if matches!(self[wave + Direction::South], Cell::Empty(None)) {
+                    flood.insert(wave + Direction::South);
+                }
+            }
+            if flood.is_empty() {
+                break;
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -203,7 +420,7 @@ struct Network {
 }
 
 impl From<Cells> for Network {
-    fn from(cells: Cells) -> Self {
+    fn from(mut cells: Cells) -> Self {
         let start = cells
             .rows()
             .enumerate()
@@ -248,6 +465,7 @@ impl From<Cells> for Network {
             }
         }
 
+        *cells.get_mut(start).unwrap() = Cell::Pipe(Pipe(directions.clone().try_into().unwrap()));
         Network {
             start: (start, Pipe(directions.try_into().unwrap())),
             cells,
@@ -284,14 +502,66 @@ impl Network {
             }
         }
     }
+
+    fn discard_junk(&mut self) -> &mut Self {
+        let start_loop = self.get_loop();
+
+        for (y, row) in self.cells.rows_mut().enumerate() {
+            for (x, cell) in row.iter_mut().enumerate() {
+                if !start_loop.contains(&Coordinates {
+                    x: x as isize,
+                    y: y as isize,
+                }) {
+                    *cell = Cell::Empty(None)
+                }
+            }
+        }
+
+        self
+    }
+
+    fn fill_areas(&mut self) -> &mut Self {
+        let start_loop = self.get_loop();
+
+        let mut curvature = 0;
+
+        for (last, current) in start_loop.iter().tuple_windows() {
+            curvature += self.cells.curvature(*last, *current).unwrap();
+        }
+
+        for (last, curent) in start_loop.iter().tuple_windows() {
+            for inner in self.cells.get_orthogonal(*last, *curent, curvature) {
+                if let Cell::Empty(None) = self.cells[inner] {
+                    self.cells.flood_fill(Area::Inner, inner);
+                }
+            }
+            for outer in self.cells.get_orthogonal(*last, *curent, -curvature) {
+                if let Cell::Empty(None) = self.cells[outer] {
+                    self.cells.flood_fill(Area::Outer, outer);
+                }
+            }
+        }
+
+        self
+    }
 }
 
 pub fn part_one(input: &str) -> Option<usize> {
     (Network::from_str(input).unwrap().get_loop().len() / 2).into_some()
 }
 
-pub fn part_two(input: &str) -> Option<u32> {
-    None
+pub fn part_two(input: &str) -> Option<usize> {
+    let mut network = Network::from_str(input).unwrap();
+
+    network.discard_junk().fill_areas();
+
+    network
+        .cells
+        .rows()
+        .flat_map(|row| row.iter())
+        .filter(|c| matches!(c, Cell::Empty(Some(Area::Inner))))
+        .count()
+        .into_some()
 }
 
 #[cfg(test)]
@@ -300,13 +570,17 @@ mod tests {
 
     #[test]
     fn test_part_one() {
-        let result = part_one(&advent_of_code::template::read_file("examples", DAY));
+        let result = part_one(&advent_of_code::template::read_file_part(
+            "examples", DAY, 1,
+        ));
         assert_eq!(result, 8.into_some());
     }
 
     #[test]
     fn test_part_two() {
-        let result = part_two(&advent_of_code::template::read_file("examples", DAY));
-        assert_eq!(result, None);
+        let result = part_two(&advent_of_code::template::read_file_part(
+            "examples", DAY, 2,
+        ));
+        assert_eq!(result, 10.into_some());
     }
 }
