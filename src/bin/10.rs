@@ -1,15 +1,13 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Display},
-    io::stdin,
-    iter::repeat,
     ops::{Add, AddAssign, Index},
     str::FromStr,
 };
 
 use chumsky::{prelude::*, text::newline};
 use itertools::Itertools;
-use strum::{EnumCount, EnumIs, FromRepr};
+use strum::EnumIs;
 use tailsome::{IntoOption, IntoResult};
 
 advent_of_code::solution!(10);
@@ -51,7 +49,7 @@ impl Direction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Pipe([Direction; 2]);
 
 impl TryFrom<char> for Pipe {
@@ -116,6 +114,11 @@ enum Area {
     Outer,
 }
 
+trait IsCell: Display + Debug {
+    fn from_pipe(pipe: Pipe) -> Self;
+    fn from_empty(area: Option<Area>) -> Self;
+}
+
 #[derive(Debug, EnumIs)]
 enum RawCell {
     Empty(Option<Area>),
@@ -123,11 +126,62 @@ enum RawCell {
     Pipe(Pipe),
 }
 
+impl IsCell for RawCell {
+    fn from_pipe(pipe: Pipe) -> Self {
+        RawCell::Pipe(pipe)
+    }
+
+    fn from_empty(area: Option<Area>) -> Self {
+        RawCell::Empty(area)
+    }
+}
+
+impl From<char> for RawCell {
+    fn from(value: char) -> Self {
+        if value == 'S' {
+            return RawCell::Start;
+        }
+
+        Pipe::try_from(value)
+            .map(RawCell::Pipe)
+            .unwrap_or(RawCell::Empty(None))
+    }
+}
+
+impl Display for RawCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Cell::try_from(self)
+            .map(|c| f.write_str(c.to_string().as_str()))
+            .unwrap_or(f.write_str("S"))
+    }
+}
+
 #[derive(Debug, EnumIs)]
 enum Cell {
     Empty(Option<Area>),
-    Start,
     Pipe(Pipe),
+}
+
+impl IsCell for Cell {
+    fn from_pipe(pipe: Pipe) -> Self {
+        Cell::Pipe(pipe)
+    }
+
+    fn from_empty(area: Option<Area>) -> Self {
+        Cell::Empty(area)
+    }
+}
+
+impl TryFrom<&RawCell> for Cell {
+    type Error = ();
+
+    fn try_from(value: &RawCell) -> Result<Self, Self::Error> {
+        match value {
+            RawCell::Empty(area) => Cell::Empty(*area).into_ok(),
+            RawCell::Start => ().into_err()?,
+            RawCell::Pipe(pipe) => Cell::Pipe(pipe.clone()).into_ok(),
+        }
+    }
 }
 
 impl Display for Cell {
@@ -136,20 +190,7 @@ impl Display for Cell {
             Cell::Empty(None) => f.write_str("."),
             Cell::Empty(Some(Area::Inner)) => f.write_str("█"),
             Cell::Empty(Some(Area::Outer)) => f.write_str("░"),
-            Cell::Start => f.write_str("S"),
             Cell::Pipe(pipe) => f.write_str(&pipe.to_string()),
-        }
-    }
-}
-
-impl From<char> for Cell {
-    fn from(value: char) -> Self {
-        if value == 'S' {
-            Cell::Start
-        } else {
-            Pipe::try_from(value)
-                .map(Cell::Pipe)
-                .unwrap_or(Cell::Empty(None))
         }
     }
 }
@@ -191,9 +232,9 @@ impl AddAssign<Direction> for Coordinates {
     }
 }
 
-struct Cells(Vec<Vec<Cell>>);
+struct Cells<T: IsCell>(Vec<Vec<T>>);
 
-impl Debug for Cells {
+impl<T: IsCell> Debug for Cells<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("\n")?;
         for row in self.rows() {
@@ -207,13 +248,28 @@ impl Debug for Cells {
     }
 }
 
-impl From<Vec<Vec<Cell>>> for Cells {
-    fn from(value: Vec<Vec<Cell>>) -> Self {
+impl<T: IsCell> From<Vec<Vec<T>>> for Cells<T> {
+    fn from(value: Vec<Vec<T>>) -> Self {
         Self(value)
     }
 }
 
-impl Index<Coordinates> for Cells {
+impl Index<Coordinates> for Cells<RawCell> {
+    type Output = RawCell;
+
+    fn index(&self, index: Coordinates) -> &Self::Output {
+        if index.x < 0 || index.y < 0 {
+            return &RawCell::Empty(Some(Area::Outer));
+        }
+
+        self.0
+            .get(index.y as usize)
+            .and_then(|row| row.get(index.x as usize))
+            .unwrap_or(&RawCell::Empty(Some(Area::Outer)))
+    }
+}
+
+impl Index<Coordinates> for Cells<Cell> {
     type Output = Cell;
 
     fn index(&self, index: Coordinates) -> &Self::Output {
@@ -228,8 +284,8 @@ impl Index<Coordinates> for Cells {
     }
 }
 
-impl Cells {
-    fn get_mut(&mut self, index: Coordinates) -> Option<&mut Cell> {
+impl<T: IsCell> Cells<T> {
+    fn get_mut(&mut self, index: Coordinates) -> Option<&mut T> {
         if index.x < 0 || index.y < 0 {
             return None;
         }
@@ -239,14 +295,15 @@ impl Cells {
             .and_then(|row| row.get_mut(index.x as usize))
     }
 
-    fn rows(&self) -> impl Iterator<Item = &Vec<Cell>> {
+    fn rows(&self) -> impl Iterator<Item = &Vec<T>> {
         self.0.iter()
     }
 
-    fn rows_mut(&mut self) -> impl Iterator<Item = &mut Vec<Cell>> {
+    fn rows_mut(&mut self) -> impl Iterator<Item = &mut Vec<T>> {
         self.0.iter_mut()
     }
-
+}
+impl Cells<Cell> {
     fn onto(&self, from: Coordinates, through: Coordinates) -> Option<Coordinates> {
         let Cell::Pipe(cell) = &self[through] else {
             return None;
@@ -415,12 +472,12 @@ impl Cells {
 
 #[derive(Debug)]
 struct Network {
-    cells: Cells,
-    start: (Coordinates, Pipe),
+    cells: Cells<Cell>,
+    start: Coordinates,
 }
 
-impl From<Cells> for Network {
-    fn from(mut cells: Cells) -> Self {
+impl From<Cells<RawCell>> for Network {
+    fn from(cells: Cells<RawCell>) -> Self {
         let start = cells
             .rows()
             .enumerate()
@@ -443,33 +500,48 @@ impl From<Cells> for Network {
             })
             .unwrap();
 
-        let mut directions = Vec::<Direction>::new();
-        if let Cell::Pipe(pipe) = &cells[start + Direction::North] {
-            if pipe.is_south() {
-                directions.push(Direction::North)
-            }
-        }
-        if let Cell::Pipe(pipe) = &cells[start + Direction::East] {
-            if pipe.is_west() {
-                directions.push(Direction::East)
-            }
-        }
-        if let Cell::Pipe(pipe) = &cells[start + Direction::South] {
-            if pipe.is_north() {
-                directions.push(Direction::South)
-            }
-        }
-        if let Cell::Pipe(pipe) = &cells[start + Direction::West] {
-            if pipe.is_east() {
-                directions.push(Direction::West)
-            }
-        }
+        let cells = Cells::<Cell>::from(
+            cells
+                .0
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|cell| {
+                            if let RawCell::Start = cell {
+                                let mut directions = Vec::<Direction>::new();
 
-        *cells.get_mut(start).unwrap() = Cell::Pipe(Pipe(directions.clone().try_into().unwrap()));
-        Network {
-            start: (start, Pipe(directions.try_into().unwrap())),
-            cells,
-        }
+                                if let RawCell::Pipe(pipe) = &cells[start + Direction::North] {
+                                    if pipe.is_south() {
+                                        directions.push(Direction::North)
+                                    }
+                                }
+                                if let RawCell::Pipe(pipe) = &cells[start + Direction::East] {
+                                    if pipe.is_west() {
+                                        directions.push(Direction::East)
+                                    }
+                                }
+                                if let RawCell::Pipe(pipe) = &cells[start + Direction::South] {
+                                    if pipe.is_north() {
+                                        directions.push(Direction::South)
+                                    }
+                                }
+                                if let RawCell::Pipe(pipe) = &cells[start + Direction::West] {
+                                    if pipe.is_east() {
+                                        directions.push(Direction::West)
+                                    }
+                                }
+
+                                Cell::Pipe(Pipe(directions.try_into().unwrap()))
+                            } else {
+                                cell.try_into().unwrap()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        Network { start, cells }
     }
 }
 
@@ -477,10 +549,10 @@ impl FromStr for Network {
     type Err = Vec<Simple<char>>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let row = newline().not().map(|c: char| Cell::from(c)).repeated();
+        let row = newline().not().map(|c: char| RawCell::from(c)).repeated();
 
         row.separated_by(newline())
-            .map(Cells::from)
+            .map(Cells::<RawCell>::from)
             .map(Network::from)
             .parse(s)
     }
@@ -488,16 +560,21 @@ impl FromStr for Network {
 
 impl Network {
     fn get_loop(&self) -> Vec<Coordinates> {
-        let mut coordinates = vec![self.start.0];
+        let mut coordinates = vec![self.start];
 
-        let mut last = self.start.0;
-        let mut current = last + self.start.1.directions()[0];
+        let mut last = self.start;
+        let mut current = last
+            + if let Cell::Pipe(cell) = &self.cells[self.start] {
+                cell.directions()[0]
+            } else {
+                unreachable!()
+            };
 
         loop {
             coordinates.push(current);
             (last, current) = (current, self.cells.onto(last, current).unwrap());
 
-            if current == self.start.0 {
+            if current == self.start {
                 return coordinates;
             }
         }
